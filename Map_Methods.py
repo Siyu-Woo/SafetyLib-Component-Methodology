@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 Point = Tuple[float, float]
 Ori = Tuple[float, float]
 
-# global delta_s=0.01
+delta_s = 0.1  # 设置全局变量 delta_s
 
 # --------------------------------点列计算方法-----------------------------------#
 # 基于两点生成直线参考线上的点坐标
@@ -17,6 +17,8 @@ def generate_reference_line_points(start_point, end_point, delta_s):
     dx = end_point[0] - start_point[0]
     dy = end_point[1] - start_point[1]
     length = (dx ** 2 + dy ** 2) ** 0.5
+
+    print("111111::",length)
 
     x_func = lambda s: start_point[0] + (dx / length) * s
     y_func = lambda s: start_point[1] + (dy / length) * s
@@ -28,10 +30,8 @@ def generate_reference_line_points(start_point, end_point, delta_s):
         y = y_func(s)
         points.append((x, y))
         s += delta_s
-    if s - delta_s < length:
-        x = x_func(length)
-        y = y_func(length)
-        points.append((x, y))
+    if abs(points[-1][0] - end_point[0]) > 1e-6 or abs(points[-1][1] - end_point[1]) > 1e-6:
+        points.append(end_point)
 
     return points, length
 
@@ -57,7 +57,7 @@ def generate_lane_lines(refline_points, left_lane_count, right_lane_count, delta
             cum_width[-j].append(left_cum_width)
         right_cum_width = 0
         for j in range(1, right_lane_count + 1):
-            right_cum_width += get_lane_width(lanes[-j], s, delta_s)
+            right_cum_width += get_lane_width(lanes[j], s, delta_s)
             cum_width[j].append(right_cum_width)
 
     for lane_id, lane in lanes.items():
@@ -335,8 +335,6 @@ def remove_points_between_boundaries(main_road_boundary_lines: Dict[str, List[Tu
                 remaining_points.append(point)
         main_road_boundary_lines[side] = remaining_points
 
-
-
 # --------------------------------宽度计算方法-----------------------------------#
 # 获取长度s处的车道宽度
 # lane=道路序列（仅一个车道）, s=沿着车道长度的位置,delta_s=宽度采样颗粒度
@@ -351,24 +349,34 @@ def get_lane_width(lane, s, delta_s=0.1):
         return samples[0]
 
 # 调整指定车道宽度（变宽/变窄）
-# lane_sequence=车道序列（需要调整的对象）, LaneID=需要处理处理的车道id, start_s=开始调整位置, end_s=结束调整位置, end_width=目标宽度, delta_s=采样步长
-def adjust_lane_width(lane_sequence, LaneID, start_s, end_s, end_width, delta_s=0.1):
+# lane_sequence=车道序列（需要调整的对象）, start_s=开始调整位置, end_s=结束调整位置, end_width=目标宽度, delta_s=采样步长
+def adjust_lane_width(lane_sequence, start_s, end_s, end_width, delta_s=0.1):
+    width_samples = lane_sequence['width_samples']
+
     # 获取车道宽度的初始值和结束值
-    start_width = get_lane_width(lane_sequence[LaneID], start_s, delta_s)
-    length = len(lane_sequence[LaneID]['width_samples']) * delta_s
+    start_width = get_lane_width(lane_sequence, start_s)
+    length = len(width_samples) * delta_s
+    num_samples = int(length / delta_s)
 
     # 计算起始和结束的索引位置
     start_index = int(start_s / delta_s)
-    end_index = min(int(end_s / delta_s), len(lane_sequence[LaneID]['width_samples']) - 1)
+    end_index = min(int(end_s / delta_s), len(width_samples) - 1)
 
     # 生成宽度变化的序列
     width_change = (end_width - start_width) / (end_index - start_index)
     new_width_samples = [start_width] * start_index  # 保持起点之前的宽度不变
     new_width_samples.extend(start_width + i * width_change for i in range(end_index - start_index + 1))
 
-    # 处理剩余部分为终止宽度
-    remaining_length = length - (end_index - start_index) * delta_s
+    print("num_samples", num_samples)
+    print("start_index", start_index)
+    print("end_index", end_index)
+
+    print("num_samples-end_index", num_samples - end_index)
+    # 计算从调整范围结束位置到end_s的长度
+    remaining_length = (num_samples - end_index) * delta_s
+    # 计算这段长度内的采样点数量
     remaining_samples = int(remaining_length / delta_s)
+    # 将剩余部分设置为目标宽度
     new_width_samples.extend([end_width] * remaining_samples)
 
     return new_width_samples
@@ -403,7 +411,6 @@ def _calculate_road_right_width(lanes, right_lane_count, length):
             lane_widths.append(total_width)
         return lane_widths
 
-
 # ----------------------------验证样本生成---------------------------------#
 # 创建单个车道信息字典
 # id=车道id, default_width=默认车道宽度（起始车道宽度）, end_width=终止车道宽度, length=车道长度
@@ -418,7 +425,7 @@ def create_lane(id=0, default_width=1, end_width=1, length=1):
 # start_width=起点坐标, end_width=终点坐标, length=车道长度
 def generate_width_samples(start_width, end_width=3.5, length=1):
     samples = []
-    num_samples = int(length / 0.1) + 1
+    num_samples = int(length / delta_s) + 1
     if num_samples == 1:  # 如果只有一个采样点，直接返回起始宽度
         return [start_width]
 
@@ -546,21 +553,25 @@ def generate_road_example():
     default_lane_count = 3
     default_lane_width = 3
     end_width = 3
-    delta_s_main_road = 0.1  # 主路参考线采样步长
+    delta_s_main_road = delta_s  # 主路参考线采样步长
 
     # 生成主路的参考线和车道信息
     main_road_refline_points, main_road_length = generate_reference_line_points(main_road_start_point,
                                                                                 main_road_end_point,
                                                                                 delta_s_main_road)
     main_road_lanes = _generate_lanes(default_lane_count, default_lane_width, end_width, length=main_road_length)
-    LaneID=1
-#   print(main_road_lanes[LaneID]['width_samples'])
-    main_road_lanes[LaneID]['width_samples']=adjust_lane_width(main_road_lanes, LaneID, 20, 50, 4, delta_s=0.1)
+
+    LaneID=-2
+
+    for key, value in main_road_lanes.items():
+        print(key, ":", value)
+
+    main_road_lanes[LaneID]['width_samples'] = adjust_lane_width(main_road_lanes[LaneID], 20, 50, 4, delta_s=delta_s)
 
     # 定义匝道的几何参数
     ramp_length = 100
     ramp_angle = 30  # 匝道相对于主路的角度（单位：度）
-    delta_s_ramp = 0.1  # 匝道参考线采样步长
+    delta_s_ramp = delta_s  # 匝道参考线采样步长
     ramp_s = 10
 
     # 获取匝道起点和终点
@@ -579,11 +590,12 @@ def generate_road_example():
                                                delta_s_main_road, main_road_lanes)
     main_road_boundary_lines = generate_boundary_lines(main_road_lane_lines, main_road_refline_points,
                                                        default_lane_count, default_lane_count)
-    
+
     # 计算匝道边界线与主路边界线的交点
     intersection_points_boundary = calculate_intersection_points(ramp_boundary_lines, main_road_boundary_lines)
     intersection_points_lane = calculate_intersection_points_lane(ramp_lane_lines, main_road_boundary_lines)
     print("Intersection Points:", intersection_points_boundary)
+    print("Intersection Points:", intersection_points_lane)
 
     # 使用 remove_points_at_intersection 函数去除匝道边界线上与主路边界线同侧的点，并更新匝道的边界线
     remove_points_at_intersection(ramp_boundary_lines, intersection_points_boundary, main_road_boundary_lines)
@@ -596,6 +608,6 @@ def generate_road_example():
     # 调用可视化函数
     visualize_road(main_road_refline_points, ramp_refline_points, main_road_lane_lines, ramp_lane_lines,
                    main_road_boundary_lines, ramp_boundary_lines)
-    
+
 # 生成主路和匝道示例
 generate_road_example()
